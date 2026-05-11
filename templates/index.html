@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCTV Live Stream</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+<script>eruda.init();</script>
+    <style>
+        .video-wrapper {
+            cursor: pointer;
+            position: relative;
+        }
+
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+            background: #000;
+        }
+
+        /* 전체화면 아이콘 오버레이 */
+        .fullscreen-hint {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0);
+            background: rgba(0, 0, 0, 0.55);
+            color: #fff;
+            font-size: 3rem;
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+            transition: transform 0.15s ease, opacity 0.3s ease;
+            opacity: 0;
+        }
+
+        .fullscreen-hint.show {
+            transform: translate(-50%, -50%) scale(1);
+            opacity: 1;
+        }
+
+        /* 녹화 버튼 */
+        .record-btn {
+            padding: 8px 16px;
+            background: transparent;
+            color: #ef4444;
+            border: 2px solid #ef4444;
+            border-radius: 8px;
+            font-size: 0.9em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+            white-space: nowrap;
+        }
+
+        .record-btn:hover:not(:disabled) {
+            background: #ef4444;
+            color: #fff;
+        }
+
+        .record-btn.recording {
+            background: #ef4444;
+            color: #fff;
+            animation: pulse 1.2s infinite;
+        }
+
+        .record-btn:disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+
+        /* 전체화면 상태에서 video가 화면을 꽉 채우도록 */
+        :fullscreen video,
+        :-webkit-full-screen video {
+            width: 100vw;
+            height: 100vh;
+            object-fit: contain;
+            background: #000;
+        }
+
+        :fullscreen .video-wrapper,
+        :-webkit-full-screen .video-wrapper {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            background: #000;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>CCTV Live Stream</h1>
+            <div class="header-actions">
+                <span class="status" id="statusBadge">● 연결 중...</span>
+                <button class="record-btn" id="recordBtn" disabled>● 녹화</button>
+                <a href="/setup" class="settings-btn" id="settingsBtn">⚙️ 설정 변경</a>
+            </div>
+        </div>
+        <div class="video-wrapper" id="videoWrapper">
+            <video id="videoEl" autoplay muted playsinline></video>
+            <div class="fullscreen-hint" id="fullscreenHint">⛶</div>
+        </div>
+        <div class="info">
+            <div class="info-card">
+                <div class="label">Resolution</div>
+                <div class="value">{{ stream_info.width }}×{{ stream_info.height }}</div>
+            </div>
+            <div class="info-card">
+                <div class="label">Frame Rate</div>
+                <div class="value">{{ stream_info.fps }} FPS</div>
+            </div>
+            <div class="info-card">
+                <div class="label">Stream</div>
+                <div class="value">{{ stream_info.name }}</div>
+            </div>
+            <div class="info-card">
+                <div class="label">Protocol</div>
+                <div class="value">MSE</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const STREAM_NAME = {{ stream_name | tojson }};
+        const statusBadge = document.getElementById('statusBadge');
+        const video = document.getElementById('videoEl');
+
+        // ── MSE 스트리밍 ───────────────────────────────────────────
+        // go2rtc WebSocket 프로토콜:
+        //   클라 → 서버: JSON {type:"mse", value:"코덱목록"}
+        //   서버 → 클라: JSON {type:"mse", value:"video/mp4; codecs=..."}
+        //   서버 → 클라: binary fMP4 데이터
+        const CODECS = [
+            'avc1.640029', 'avc1.64002A', 'avc1.640033',
+            'hvc1.1.6.L153.B0', 'mp4a.40.2', 'mp4a.40.5', 'flac', 'opus',
+        ];
+
+        let ws = null;
+        let reconnectTimer = null;
+
+        function cleanup(preventReconnect) {
+            clearTimeout(reconnectTimer);
+            if (ws) {
+                if (preventReconnect) ws.onclose = null;
+                ws.close();
+                ws = null;
+            }
+            if (video.srcObject) {
+                video.srcObject = null;
+            }
+            if (video.src) {
+                URL.revokeObjectURL(video.src);
+                video.removeAttribute('src');
+                video.load();
+            }
+        }
+
+        function startMSE() {
+            cleanup(false);
+
+            // Safari iOS: ManagedMediaSource 사용
+            const isMMS = 'ManagedMediaSource' in window;
+            const MS = isMMS ? window.ManagedMediaSource : MediaSource;
+
+            const ms = new MS();
+            const isTypeSupported = t => MS.isTypeSupported ? MS.isTypeSupported(t) : MediaSource.isTypeSupported(t);
+
+            if (isMMS) {
+                video.disableRemotePlayback = true;
+                video.srcObject = ms;
+            } else {
+                video.src = URL.createObjectURL(ms);
+            }
+
+            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+            const wsUrl = `${proto}://${location.host}/ws?src=${encodeURIComponent(STREAM_NAME)}`;
+            console.log('[MSE] WebSocket 연결 시도:', wsUrl);
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.addEventListener('open', () => console.log('[MSE] WebSocket 열림'));
+            ws.addEventListener('error', e => console.error('[MSE] WebSocket 오류:', e));
+
+            let sb = null;
+            const buf = new Uint8Array(2 * 1024 * 1024);
+            let bufLen = 0;
+
+            ms.addEventListener('sourceopen', () => {
+                console.log('[MSE] sourceopen 발생');
+                if (!isMMS) URL.revokeObjectURL(video.src);
+
+                // WebSocket이 아직 연결 중이면 open 대기
+                const sendCodecs = () => {
+                    const supported = CODECS.filter(c => isTypeSupported(`video/mp4; codecs="${c}"`)).join(',');
+                    console.log('[MSE] 코덱 전송:', supported);
+                    ws.send(JSON.stringify({type: 'mse', value: supported}));
+                };
+                if (ws.readyState === WebSocket.OPEN) {
+                    sendCodecs();
+                } else {
+                    ws.addEventListener('open', sendCodecs, {once: true});
+                }
+            }, {once: true});
+
+            ws.onmessage = e => {
+                if (typeof e.data === 'string') {
+                    console.log('[MSE] JSON 수신:', e.data);
+                    const msg = JSON.parse(e.data);
+                    if (msg.type !== 'mse') return;
+                    // 서버가 사용할 MIME 타입 알려줌 → SourceBuffer 생성
+                    sb = ms.addSourceBuffer(msg.value);
+                    sb.mode = 'segments';
+                    sb.addEventListener('updateend', () => {
+                        // 큐에 쌓인 데이터 append
+                        if (!sb.updating && bufLen > 0) {
+                            try {
+                                const data = buf.slice(0, bufLen);
+                                sb.appendBuffer(data);
+                                bufLen = 0;
+                            } catch (e) { bufLen = 0; }
+                        }
+                        // 버퍼 5초 유지 + currentTime 보정 (go2rtc 방식)
+                        if (!sb.updating && sb.buffered && sb.buffered.length) {
+                            const end = sb.buffered.end(sb.buffered.length - 1);
+                            const start0 = sb.buffered.start(0);
+                            const keepFrom = end - 5;
+                            if (keepFrom > start0) {
+                                try { sb.remove(start0, keepFrom); } catch (e) {}
+                                try { ms.setLiveSeekableRange(keepFrom, end); } catch (e) {}
+                            }
+                            // currentTime이 버퍼 범위 밖이면 라이브 엣지로 이동
+                            if (video.currentTime < start0) {
+                                video.currentTime = Math.max(start0, end - 0.5);
+                            }
+                        }
+                    });
+                } else {
+                    // 바이너리 fMP4 데이터
+                    if (!sb) { console.warn('[MSE] binary 수신했지만 SourceBuffer 없음'); return; }
+                    if (sb.updating || bufLen > 0) {
+                        const b = new Uint8Array(e.data);
+                        buf.set(b, bufLen);
+                        bufLen += b.byteLength;
+                    } else {
+                        try { sb.appendBuffer(e.data); } catch (e) {}
+                    }
+                }
+            };
+
+            ws.onclose = e => {
+                console.warn('[MSE] WebSocket 닫힘 code:', e.code, 'reason:', e.reason);
+                statusBadge.textContent = '● 끊김';
+                statusBadge.style.background = '#ef4444';
+                recordBtn.disabled = true;
+                if (serverRecording) stopRecording();
+                reconnectTimer = setTimeout(startMSE, 3000);
+            };
+
+            video.onerror = () => console.error('[MSE] video error:', video.error?.code, video.error?.message);
+            video.onstalled = () => console.warn('[MSE] video stalled, currentTime:', video.currentTime);
+            video.onwaiting = () => console.warn('[MSE] video waiting, currentTime:', video.currentTime);
+
+            video.onplaying = () => {
+                statusBadge.textContent = '● LIVE';
+                statusBadge.style.background = '#10b981';
+                recordBtn.disabled = false;
+            };
+
+            // 모바일에서 브라우저가 자동 pause 시키는 경우 복구
+            const stallGuard = setInterval(() => {
+                if (ws && ws.readyState === WebSocket.OPEN && video.paused && !video.ended) {
+                    video.play().catch(() => {});
+                }
+            }, 2000);
+
+            ws.addEventListener('close', () => clearInterval(stallGuard));
+
+            video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
+        }
+
+        // ── 녹화 ──────────────────────────────────────────────────
+        const recordBtn = document.getElementById('recordBtn');
+        let recordStartTime = null;
+        let recordTimerInterval = null;
+        let serverRecording = false;
+
+        function formatDuration(ms) {
+            const s = Math.floor(ms / 1000);
+            const m = Math.floor(s / 60);
+            return `${String(m).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+        }
+
+        async function startRecording() {
+            const resp = await fetch('/api/record/start', { method: 'POST' });
+            if (!resp.ok) { alert('녹화 시작 실패'); return; }
+            serverRecording = true;
+            recordStartTime = Date.now();
+            recordBtn.classList.add('recording');
+            recordTimerInterval = setInterval(() => {
+                recordBtn.textContent = `⏹ ${formatDuration(Date.now() - recordStartTime)}`;
+            }, 500);
+        }
+
+        async function stopRecording() {
+            if (!serverRecording) return;
+            serverRecording = false;
+            clearInterval(recordTimerInterval);
+            recordBtn.classList.remove('recording');
+            recordBtn.textContent = '● 녹화';
+
+            const resp = await fetch('/api/record/stop', { method: 'POST' });
+            if (!resp.ok) { alert('녹화 파일 저장 실패'); return; }
+
+            // 브라우저가 직접 스트리밍 다운로드 (blob 메모리 버퍼링 없음)
+            const a = document.createElement('a');
+            a.href = '/api/record/download';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        recordBtn.addEventListener('click', () => {
+            if (serverRecording) stopRecording();
+            else startRecording();
+        });
+
+        // ── 전체화면 ──────────────────────────────────────────────
+        const videoWrapper = document.getElementById('videoWrapper');
+        const fullscreenHint = document.getElementById('fullscreenHint');
+
+        function isFullscreen() {
+            return !!(document.fullscreenElement || document.webkitFullscreenElement);
+        }
+
+        function requestFullscreen(el) {
+            if (el.requestFullscreen) return el.requestFullscreen();
+            if (el.webkitRequestFullscreen) return el.webkitRequestFullscreen();
+            if (video.webkitEnterFullscreen) return video.webkitEnterFullscreen();
+        }
+
+        function exitFullscreen() {
+            if (document.exitFullscreen) return document.exitFullscreen();
+            if (document.webkitExitFullscreen) return document.webkitExitFullscreen();
+        }
+
+        function showHint(icon) {
+            fullscreenHint.textContent = icon;
+            fullscreenHint.classList.add('show');
+            setTimeout(() => fullscreenHint.classList.remove('show'), 600);
+        }
+
+        videoWrapper.addEventListener('click', () => {
+            if (isFullscreen()) {
+                exitFullscreen();
+                showHint('⊠');
+            } else {
+                requestFullscreen(videoWrapper);
+                showHint('⛶');
+            }
+        });
+
+        // 설정 변경 시 스트림 해제
+        document.getElementById('settingsBtn').addEventListener('click', async e => {
+            e.preventDefault();
+            cleanup(true);
+            await fetch('/api/disconnect', { method: 'POST' });
+            window.location.href = '/setup';
+        });
+
+        // 페이지 나갈 때 스트림 정리 + 녹화 중 경고
+        window.addEventListener('beforeunload', e => {
+            if (serverRecording) {
+                e.preventDefault();
+                return e.returnValue = '녹화 중입니다. 페이지를 떠나면 녹화가 중단됩니다.';
+            }
+            cleanup(true);
+            navigator.sendBeacon('/api/disconnect');
+        });
+
+        startMSE();
+    </script>
+</body>
+
+</html>

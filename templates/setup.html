@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>카메라 설정</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .setup-form {
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            color: #94a3b8;
+            font-size: 0.9em;
+            margin-bottom: 8px;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            background: #0f172a;
+            border: 1px solid #475569;
+            border-radius: 8px;
+            color: #f1f5f9;
+            font-size: 1em;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #10b981;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 14px;
+            background: #10b981;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .btn:hover {
+            background: #059669;
+        }
+
+        .btn:disabled {
+            background: #475569;
+            cursor: not-allowed;
+        }
+
+        .error-message {
+            background: #7f1d1d;
+            color: #fca5a5;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .error-message.show {
+            display: block;
+        }
+
+        .loading {
+            text-align: center;
+            color: #94a3b8;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .profile-option {
+            padding: 8px;
+            background: #1e293b;
+            color: #f1f5f9;
+        }
+
+        .divider {
+            text-align: center;
+            margin: 20px 0;
+            color: #94a3b8;
+        }
+
+        .camera-list {
+            margin-top: 15px;
+            display: grid;
+            gap: 10px;
+        }
+
+        .camera-item {
+            background: #0f172a;
+            border: 1px solid #475569;
+            border-radius: 8px;
+            padding: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .camera-item:hover {
+            border-color: #10b981;
+            background: #1e293b;
+        }
+
+        .camera-item.selected {
+            border-color: #10b981;
+            background: #1e293b;
+        }
+
+        .camera-ip {
+            color: #10b981;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .camera-name {
+            color: #94a3b8;
+            font-size: 0.9em;
+        }
+
+        .progress-container {
+            margin-top: 15px;
+            display: none;
+        }
+
+        .progress-container.show {
+            display: block;
+        }
+
+        .progress-bar-wrapper {
+            width: 100%;
+            height: 30px;
+            background: #0f172a;
+            border-radius: 15px;
+            overflow: hidden;
+            border: 1px solid #475569;
+            position: relative;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #10b981, #059669);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+
+        .progress-info {
+            margin-top: 10px;
+            color: #94a3b8;
+            font-size: 0.9em;
+            text-align: center;
+        }
+
+        .progress-info .found {
+            color: #10b981;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>카메라 설정</h1>
+        </div>
+
+        <div class="setup-form">
+            <div class="error-message" id="errorMessage"></div>
+
+            <!-- Step 0: 카메라 검색 (선택사항) -->
+            <div id="discoverySection" class="">
+                <button type="button" class="btn" id="discoverBtn">🔍 네트워크에서 카메라 검색</button>
+
+                <!-- 진행 상태 표시 -->
+                <div id="progressContainer" class="progress-container">
+                    <div class="progress-bar-wrapper">
+                        <div id="progressBar" class="progress-bar" style="width: 0%">0%</div>
+                    </div>
+                    <div class="progress-info">
+                        <span id="progressText">스캔 중: 0 / 0</span> |
+                        <span class="found">발견: <span id="foundCount">0</span>대</span>
+                    </div>
+                </div>
+
+                <div id="cameraList" class="hidden camera-list"></div>
+            </div>
+
+            <div class="divider">또는</div>
+
+            <!-- Step 1: 카메라 연결 정보 입력 -->
+            <form id="cameraForm" class="">
+                <div class="form-group">
+                    <label for="ip">카메라 IP 주소 (직접 입력)</label>
+                    <input type="text" id="ip" name="ip" placeholder="192.168.1.100" value="192.168.9.230" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="port">ONVIF 포트 (기본: 80)</label>
+                    <input type="number" id="port" name="port" value="80" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="username">사용자명</label>
+                    <input type="text" id="username" name="username" placeholder="admin" value="admin" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="password">비밀번호</label>
+                    <input type="password" id="password" name="password" value="admin1357" required>
+                </div>
+
+                <button type="submit" class="btn" id="submitBtn">프로필 조회</button>
+            </form>
+
+            <!-- Step 2: 스트림 프로필 선택 -->
+            <div id="profileSelection" class="hidden">
+                <div class="form-group">
+                    <label for="profileSelect">스트림 선택</label>
+                    <select id="profileSelect" class="form-group">
+                        <!-- 프로필 옵션이 동적으로 추가됨 -->
+                    </select>
+                </div>
+
+                <button type="button" class="btn" id="connectBtn">스트리밍 시작</button>
+            </div>
+
+            <div class="loading" id="loading">
+                <p>카메라 연결 중...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('cameraForm');
+        const errorMessage = document.getElementById('errorMessage');
+        const loading = document.getElementById('loading');
+        const submitBtn = document.getElementById('submitBtn');
+        const profileSelection = document.getElementById('profileSelection');
+        const profileSelect = document.getElementById('profileSelect');
+        const connectBtn = document.getElementById('connectBtn');
+        const discoverBtn = document.getElementById('discoverBtn');
+        const cameraList = document.getElementById('cameraList');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const foundCount = document.getElementById('foundCount');
+
+        let cameraInfo = {};
+        let selectedCamera = null;
+        let progressInterval = null;
+
+        // 진행 상태 업데이트 함수
+        async function updateProgress() {
+            try {
+                const response = await fetch('/api/scan_progress');
+                const data = await response.json();
+
+                // Progress bar 업데이트
+                progressBar.style.width = data.percentage + '%';
+                progressBar.textContent = data.percentage + '%';
+
+                // 텍스트 정보 업데이트
+                progressText.textContent = `스캔 중: ${data.scanned} / ${data.total}`;
+                foundCount.textContent = data.found;
+
+                // 스캔 완료 시
+                if (!data.is_scanning && progressInterval) {
+                    clearInterval(progressInterval);
+                    progressInterval = null;
+                    loading.classList.remove('show');
+                    discoverBtn.disabled = false;
+                    progressContainer.classList.remove('show');
+
+                    // 카메라 목록 표시
+                    if (data.cameras.length > 0) {
+                        cameraList.classList.remove('hidden');
+                        cameraList.innerHTML = '';
+
+                        // IP 주소 기준으로 정렬된 카메라 표시
+                        data.cameras.forEach(camera => {
+                            const cameraItem = document.createElement('div');
+                            cameraItem.classList.add('camera-item');
+                            cameraItem.innerHTML = `
+                                <div class="camera-ip">${camera.ip}</div>
+                                <div class="camera-name">${camera.name}</div>
+                            `;
+                            cameraItem.addEventListener('click', () => {
+                                // 이전 선택 제거
+                                document.querySelectorAll('.camera-item').forEach(item => {
+                                    item.classList.remove('selected');
+                                });
+                                // 현재 아이템 선택
+                                cameraItem.classList.add('selected');
+                                selectedCamera = camera;
+                                // IP 필드에 자동 입력
+                                document.getElementById('ip').value = camera.ip;
+                            });
+                            cameraList.appendChild(cameraItem);
+                        });
+                    } else {
+                        errorMessage.textContent = '카메라를 찾을 수 없습니다.';
+                        errorMessage.classList.add('show');
+                    }
+                }
+            } catch (error) {
+                console.error('진행 상태 조회 오류:', error);
+            }
+        }
+
+        // Step 0: 카메라 검색
+        discoverBtn.addEventListener('click', async () => {
+            errorMessage.classList.remove('show');
+            loading.classList.add('show');
+            discoverBtn.disabled = true;
+            cameraList.innerHTML = '';
+            cameraList.classList.add('hidden');
+            progressContainer.classList.add('show');
+
+            // Progress bar 초기화
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+            progressText.textContent = '스캔 중: 0 / 0';
+            foundCount.textContent = '0';
+
+            try {
+                const response = await fetch('/api/discover', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    // 500ms마다 진행 상태 확인
+                    progressInterval = setInterval(updateProgress, 500);
+                } else {
+                    errorMessage.textContent = result.error || '검색 시작 실패';
+                    errorMessage.classList.add('show');
+                    loading.classList.remove('show');
+                    discoverBtn.disabled = false;
+                    progressContainer.classList.remove('show');
+                }
+            } catch (error) {
+                errorMessage.textContent = '카메라 검색 중 오류가 발생했습니다.';
+                errorMessage.classList.add('show');
+                loading.classList.remove('show');
+                discoverBtn.disabled = false;
+                progressContainer.classList.remove('show');
+            }
+        });
+
+        // Step 1: 프로필 조회
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            errorMessage.classList.remove('show');
+            loading.classList.add('show');
+            submitBtn.disabled = true;
+
+            cameraInfo = {
+                ip: document.getElementById('ip').value,
+                port: document.getElementById('port').value,
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value
+            };
+
+            try {
+                const response = await fetch('/api/get_profiles', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(cameraInfo)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    // 프로필 선택 UI 표시
+                    profileSelect.innerHTML = '';
+                    result.profiles.forEach(profile => {
+                        const option = document.createElement('option');
+                        option.value = profile.index;
+                        option.textContent = `${profile.name} - ${profile.width}x${profile.height} @ ${profile.fps}fps`;
+                        option.classList.add('profile-option');
+                        profileSelect.appendChild(option);
+                    });
+
+                    // 인증 정보는 서버 응답 대신 입력값에서 직접 유지
+                    // cameraInfo는 이미 form submit 시점에 설정되어 있음
+
+                    form.classList.add('hidden');
+                    profileSelection.classList.remove('hidden');
+                } else {
+                    errorMessage.textContent = result.error || '연결 실패';
+                    errorMessage.classList.add('show');
+                }
+            } catch (error) {
+                errorMessage.textContent = '네트워크 오류가 발생했습니다.';
+                errorMessage.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                submitBtn.disabled = false;
+            }
+        });
+
+        // Step 2: 스트리밍 시작
+        connectBtn.addEventListener('click', async () => {
+            errorMessage.classList.remove('show');
+            loading.classList.add('show');
+            connectBtn.disabled = true;
+
+            const selectedProfile = profileSelect.value;
+
+            try {
+                const response = await fetch('/api/connect', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        ...cameraInfo,
+                        profile_index: parseInt(selectedProfile)
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    window.location.href = '/';
+                } else {
+                    errorMessage.textContent = result.error || '연결 실패';
+                    errorMessage.classList.add('show');
+                }
+            } catch (error) {
+                errorMessage.textContent = '서버 오류가 발생했습니다.';
+                errorMessage.classList.add('show');
+            } finally {
+                loading.classList.remove('show');
+                connectBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,12 @@
+# 실행 파일 (별도 다운로드)
+go2rtc.exe
+cloudflared.exe
+
+# 보안
+.secret_key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
