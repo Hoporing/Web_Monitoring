@@ -4,6 +4,7 @@ cloudflared.exe
 
 # 보안
 .secret_key
+go2rtc.yaml
 
 # Python
 __pycache__/

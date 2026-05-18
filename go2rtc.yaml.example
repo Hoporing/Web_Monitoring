@@ -1,0 +1,20 @@
+api:
+  listen: :1984
+
+log:
+  level: warn
+
+webrtc:
+  ice_servers:
+    - urls: [stun:stun.l.google.com:19302]
+    - urls:
+        - turn:openrelay.metered.ca:80
+        - turn:openrelay.metered.ca:443
+        - turns:openrelay.metered.ca:443?transport=tcp
+      username: openrelayproject
+      credential: openrelayproject
+
+streams:
+  # 스트림 ID는 임의의 hex 문자열로 지정
+  your_stream_id:
+    - rtsp://username:password@192.168.x.x:554/path
