@@ -21,7 +21,7 @@ app = Flask(__name__)
 sock = Sock(app)
 
 # 서버 사이드 녹화 임시 파일 저장 경로 (None이면 시스템 temp 폴더 사용)
-RECORD_TMP_DIR = r'D:\Temporary'
+RECORD_TMP_DIR = None
 
 # 서버 사이드 녹화 상태
 # {session_id: {'file': file_obj, 'path': str, 'active': bool}}
